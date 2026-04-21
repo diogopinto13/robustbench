@@ -16,6 +16,23 @@ from robustbench.model_zoo.enums import BenchmarkDataset, ThreatModel
 from robustbench.model_zoo.architectures.resnet import ResNet18 as RBResNet18
 
 
+CIFAR10_MEAN = [0.4914, 0.4822, 0.4465]
+CIFAR10_STD = [0.2023, 0.1994, 0.2010]
+
+
+class NormalizedModel(nn.Module):
+    """Wraps a model and applies channel-wise input normalization."""
+
+    def __init__(self, model: nn.Module, mean: List[float], std: List[float]):
+        super().__init__()
+        self.model = model
+        self.register_buffer('mu', torch.tensor(mean).view(1, 3, 1, 1))
+        self.register_buffer('sigma', torch.tensor(std).view(1, 3, 1, 1))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.model((x - self.mu) / self.sigma)
+
+
 
 def _resolve_device(device: str) -> torch.device:
     if device == 'auto':
@@ -26,6 +43,14 @@ def _resolve_device(device: str) -> torch.device:
 def _load_torchscript_model(path: Path) -> nn.Module:
     model = torch.jit.load(str(path), map_location='cpu')
     return model.eval()
+
+
+def _apply_hardcoded_normalization_if_needed(model: nn.Module,
+                                             dataset: str) -> nn.Module:
+    if dataset == BenchmarkDataset.cifar_10.value:
+        print('Applying hardcoded CIFAR-10 normalization in wrapper model.')
+        return NormalizedModel(model, CIFAR10_MEAN, CIFAR10_STD).eval()
+    return model
 
 
 
@@ -91,6 +116,7 @@ def main() -> None:
 
 
     model = _load_torchscript_model(Path(args.torchscript))
+    model = _apply_hardcoded_normalization_if_needed(model, args.dataset)
 
     preprocessing = args.preprocessing or None
     corruptions_data_dir = args.corruptions_data_dir or None
